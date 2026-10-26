@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Sound team questions
-    url: https://github.com/OWNER/REPO/discussions
+    url: https://github.com/umarelll/madmage-test-asset-tracker/discussions
     about: General questions about sound, naming conventions or the pipeline (replace OWNER/REPO)
