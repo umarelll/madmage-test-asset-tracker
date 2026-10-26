@@ -1,0 +1,118 @@
+# Synced to the repository by .github/workflows/sync-labels.yml
+# Category labels must match the slug of the dropdown options in the issue forms
+# (lowercase, non-alphanumerics -> "-"), e.g. "Music - Menu / UI" -> cat:music-menu-ui
+
+- name: asset
+  color: "1d76db"
+  description: Audio asset request
+- name: revision
+  color: "5319e7"
+  description: Change to an existing asset
+- name: needs-review
+  color: "d876e3"
+  description: Waiting for audio lead sign-off to advance to the next stage
+
+# Asset types (derived automatically from the category)
+- name: "type:sfx"
+  color: "006b75"
+  description: Type - Sound effects
+- name: "type:music"
+  color: "006b75"
+  description: Type - Music
+- name: "type:vo"
+  color: "006b75"
+  description: Type - Voice-over
+
+# SFX categories
+- name: "cat:creature"
+  color: "0e8a16"
+  description: Category - Creature
+- name: "cat:spell-ability"
+  color: "0e8a16"
+  description: Category - Spell / Ability
+- name: "cat:foley"
+  color: "0e8a16"
+  description: Category - Foley
+- name: "cat:weapon-combat"
+  color: "0e8a16"
+  description: Category - Weapon / Combat
+- name: "cat:ui"
+  color: "0e8a16"
+  description: Category - UI
+- name: "cat:ambience"
+  color: "0e8a16"
+  description: Category - Ambience
+- name: "cat:environment-props"
+  color: "0e8a16"
+  description: Category - Environment / Props
+- name: "cat:impact-destruction"
+  color: "0e8a16"
+  description: Category - Impact / Destruction
+- name: "cat:cinematic"
+  color: "0e8a16"
+  description: Category - Cinematic
+- name: "cat:other"
+  color: "0e8a16"
+  description: Category - Other
+
+# Music categories
+- name: "cat:music-combat"
+  color: "5ebeff"
+  description: Category - Music / Combat
+- name: "cat:music-exploration"
+  color: "5ebeff"
+  description: Category - Music / Exploration
+- name: "cat:music-menu-ui"
+  color: "5ebeff"
+  description: Category - Music / Menu / UI
+- name: "cat:music-stinger"
+  color: "5ebeff"
+  description: Category - Music / Stinger
+- name: "cat:music-cutscene"
+  color: "5ebeff"
+  description: Category - Music / Cutscene
+
+# VO categories
+- name: "cat:vo-dialogue"
+  color: "e99695"
+  description: Category - VO / Dialogue
+- name: "cat:vo-barks-efforts"
+  color: "e99695"
+  description: Category - VO / Barks / Efforts
+- name: "cat:vo-narration"
+  color: "e99695"
+  description: Category - VO / Narration
+- name: "cat:vo-cinematic"
+  color: "e99695"
+  description: Category - VO / Cinematic
+
+# Stages (mutually exclusive, managed by automation)
+- name: "stage:not-started"
+  color: "d4d4d4"
+  description: Stage - Not started
+- name: "stage:claimed"
+  color: "fbca04"
+  description: Stage - Claimed by an audio team member
+- name: "stage:previs"
+  color: "f9a825"
+  description: Stage - Previs / placeholder in game
+- name: "stage:1st-pass"
+  color: "ff7f0e"
+  description: Stage - First pass (lead sign-off required)
+- name: "stage:finalised"
+  color: "2da44e"
+  description: Stage - Finalised and implemented (lead sign-off required)
+
+# Priority
+- name: "prio:blocker"
+  color: "b60205"
+  description: Priority - Blocker
+- name: "prio:high"
+  color: "d93f0b"
+  description: Priority - High
+- name: "prio:normal"
+  color: "c5def5"
+  description: Priority - Normal
+- name: "prio:low"
+  color: "ededed"
+  description: Priority - Low

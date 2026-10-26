@@ -1,0 +1,5 @@
+# GitHub usernames of audio leads, one per line (with or without @).
+# Leads (and repo admins) can approve the 1st-pass and finalised stages.
+# Protect this file with CODEOWNERS / branch protection so only leads can edit it.
+#
+# example-lead-username

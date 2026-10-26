@@ -1,0 +1,238 @@
+name: Asset automation
+
+# Labels new requests (type / category / priority / stage), handles claiming,
+# keeps stage labels mutually exclusive and enforces audio-lead sign-off for the
+# 1st-pass and finalised stages.
+#
+# Comment commands (write access required):
+#   /claim            assign yourself, stage -> claimed
+#   /unclaim          remove yourself, stage -> not-started
+#   /review           ask the audio leads to sign off the next stage (adds needs-review)
+#   /approve          (leads only) advance to the next stage
+#   /stage <name>     not-started | claimed | previs | 1st-pass | finalised
+#                     (1st-pass and finalised: leads only)
+
+on:
+  issues:
+    types: [opened, assigned, unassigned, labeled, reopened, closed]
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  automate:
+    if: ${{ !github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const STAGES = ['not-started', 'claimed', 'previs', '1st-pass', 'finalised'];
+            const GATED = ['1st-pass', 'finalised']; // need audio lead sign-off
+            const ALIASES = {
+              'not started': 'not-started', 'notstarted': 'not-started', 'todo': 'not-started',
+              'claim': 'claimed',
+              'pre-vis': 'previs',
+              '1st': '1st-pass', '1st pass': '1st-pass', 'first-pass': '1st-pass', 'first pass': '1st-pass',
+              'final': 'finalised', 'finalized': 'finalised', 'done': 'finalised',
+            };
+            const { owner, repo } = context.repo;
+            const issue = context.payload.issue;
+            const number = issue.number;
+            const action = context.payload.action;
+            const sender = context.payload.sender;
+            const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+            // ---- helpers --------------------------------------------------------
+            const leads = (() => {
+              try {
+                return fs.readFileSync('.github/audio-leads.txt', 'utf8').split('\n')
+                  .map((l) => l.replace(/#.*/, '').trim().replace(/^@/, '')).filter(Boolean);
+              } catch (e) { return []; }
+            })();
+            const isLead = async (user) => {
+              if (leads.some((l) => l.toLowerCase() === user.toLowerCase())) return true;
+              const p = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: user });
+              return p.data.permission === 'admin';
+            };
+            const mentionLeads = () => (leads.length ? leads.map((l) => '@' + l).join(' ') : 'audio leads');
+            const say = (body) => github.rest.issues.createComment({ owner, repo, issue_number: number, body });
+            const currentLabels = async () =>
+              (await github.paginate(github.rest.issues.listLabelsOnIssue, { owner, repo, issue_number: number }))
+                .map((l) => l.name);
+            const currentStage = async () => {
+              const l = (await currentLabels()).find((n) => n.startsWith('stage:'));
+              return l ? l.slice(6) : null;
+            };
+            const removeLabel = (name) =>
+              github.rest.issues.removeLabel({ owner, repo, issue_number: number, name });
+
+            // Sets exactly one stage label, clears needs-review, closes/reopens as needed.
+            async function setStage(stage) {
+              const current = await currentLabels();
+              for (const l of current) {
+                if ((l.startsWith('stage:') && l !== `stage:${stage}`) || l === 'needs-review') await removeLabel(l);
+              }
+              if (!current.includes(`stage:${stage}`)) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: [`stage:${stage}`] });
+              }
+              if (stage === 'finalised' && issue.state === 'open') {
+                await github.rest.issues.update({ owner, repo, issue_number: number, state: 'closed', state_reason: 'completed' });
+              } else if (stage !== 'finalised' && issue.state === 'closed') {
+                await github.rest.issues.update({ owner, repo, issue_number: number, state: 'open' });
+              }
+            }
+
+            const labels = issue.labels.map((l) => l.name);
+            if (!labels.includes('asset')) return;
+
+            // ---- New request: parse the form and apply labels -------------------
+            if (action === 'opened') {
+              const body = issue.body || '';
+              const field = (heading) => {
+                const m = body.match(new RegExp(`### ${heading}\\s*\\n\\n([\\s\\S]*?)(?=\\n### |$)`));
+                const v = m ? m[1].trim() : '';
+                return v === '_No response_' ? '' : v;
+              };
+              const toAdd = [];
+              const category = field('Category');
+              if (category) {
+                toAdd.push(`cat:${slug(category)}`);
+                toAdd.push(category.startsWith('Music') ? 'type:music' : category.startsWith('VO') ? 'type:vo' : 'type:sfx');
+              }
+              const priority = field('Priority');
+              if (priority) toAdd.push(`prio:${slug(priority)}`);
+              if (toAdd.length) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: toAdd });
+              }
+              const tag = field('Asset tag / ID');
+              if (tag && !labels.includes('revision')) {
+                await github.rest.issues.update({
+                  owner, repo, issue_number: number,
+                  title: category ? `[${category}] ${tag}` : `[Asset] ${tag}`,
+                });
+              }
+              await setStage('not-started');
+              return;
+            }
+
+            // ---- Assignment = claiming -----------------------------------------
+            if (action === 'assigned') {
+              const stage = await currentStage();
+              if (!stage || stage === 'not-started') await setStage('claimed');
+              return;
+            }
+            if (action === 'unassigned') {
+              const stage = await currentStage();
+              if (issue.assignees.length === 0 && stage === 'claimed') await setStage('not-started');
+              return;
+            }
+
+            // ---- Manual stage label change: keep exclusive, enforce sign-off ----
+            if (action === 'labeled') {
+              const name = context.payload.label.name;
+              if (!name.startsWith('stage:') || !STAGES.includes(name.slice(6))) return;
+              if (sender.type === 'Bot') return;
+              const stage = name.slice(6);
+              if (GATED.includes(stage) && !(await isLead(sender.login))) {
+                const prev = (await currentLabels()).find((n) => n.startsWith('stage:') && n !== name);
+                await removeLabel(name);
+                if (!prev) {
+                  await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['stage:not-started'] });
+                }
+                await say(`@${sender.login} \`${stage}\` needs audio lead sign-off, so I reverted the label. Comment \`/review\` to request it from ${mentionLeads()}.`);
+                return;
+              }
+              await setStage(stage);
+              return;
+            }
+
+            if (action === 'reopened') {
+              if ((await currentStage()) === 'finalised') await setStage('1st-pass');
+              return;
+            }
+
+            // ---- Closing: only leads can close as completed ---------------------
+            if (action === 'closed') {
+              if (sender.type === 'Bot' || issue.state_reason === 'not_planned') return;
+              if ((await currentStage()) === 'finalised') return;
+              if (await isLead(sender.login)) {
+                await setStage('finalised');
+              } else {
+                await github.rest.issues.update({ owner, repo, issue_number: number, state: 'open' });
+                await say(`@${sender.login} assets can only be closed as completed by an audio lead after sign-off. Reopened - comment \`/review\` when it is ready.`);
+              }
+              return;
+            }
+
+            // ---- Comment commands ----------------------------------------------
+            if (context.eventName === 'issue_comment') {
+              const comment = context.payload.comment;
+              if (comment.user.type === 'Bot') return;
+              const m = comment.body.trim().match(/^\/(claim|unclaim|review|approve|stage)\b\s*(.*)$/i);
+              if (!m) return;
+
+              const user = comment.user.login;
+              const perm = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: user });
+              if (!['admin', 'maintain', 'write'].includes(perm.data.permission)) {
+                await say(`@${user} you need write access to the repository to use this command.`);
+                return;
+              }
+              const react = (content) =>
+                github.rest.reactions.createForIssueComment({ owner, repo, comment_id: comment.id, content });
+              const cmd = m[1].toLowerCase();
+              const stage = (await currentStage()) || 'not-started';
+              const next = STAGES[STAGES.indexOf(stage) + 1];
+
+              if (cmd === 'claim') {
+                const others = issue.assignees.map((a) => a.login).filter((a) => a !== user);
+                if (others.length) {
+                  await say(`Already claimed by ${others.map((a) => '@' + a).join(', ')}. Ask them to \`/unclaim\` first.`);
+                  return;
+                }
+                await github.rest.issues.addAssignees({ owner, repo, issue_number: number, assignees: [user] });
+                if (stage === 'not-started') await setStage('claimed');
+                await react('rocket');
+
+              } else if (cmd === 'unclaim') {
+                await github.rest.issues.removeAssignees({ owner, repo, issue_number: number, assignees: [user] });
+                await setStage('not-started');
+                await react('+1');
+
+              } else if (cmd === 'review') {
+                if (!next) { await say('This asset is already finalised.'); return; }
+                await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['needs-review'] });
+                await say(`Review requested by @${user}: ready to move from \`${stage}\` to \`${next}\`. ${mentionLeads()} - comment \`/approve\` to advance.`);
+                await react('eyes');
+
+              } else if (cmd === 'approve') {
+                if (!(await isLead(user))) { await say(`@${user} only audio leads can approve.`); return; }
+                if (!next) { await say('This asset is already finalised.'); return; }
+                await setStage(next);
+                await say(`Approved by @${user}: \`${stage}\` -> \`${next}\`.`);
+                await react('+1');
+
+              } else {
+                const arg = m[2].trim().toLowerCase();
+                const target = STAGES.includes(arg) ? arg : ALIASES[arg];
+                if (!target) {
+                  await say(`Unknown stage \`${arg}\`. Use one of: ${STAGES.map((s) => '`' + s + '`').join(', ')}.`);
+                  return;
+                }
+                if (GATED.includes(target) && !(await isLead(user))) {
+                  await say(`@${user} \`${target}\` needs audio lead sign-off. Comment \`/review\` to request it from ${mentionLeads()}.`);
+                  return;
+                }
+                if (target !== 'not-started' && issue.assignees.length === 0) {
+                  await github.rest.issues.addAssignees({ owner, repo, issue_number: number, assignees: [user] });
+                }
+                await setStage(target);
+                await react('+1');
+              }
+            }
